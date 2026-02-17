@@ -1,18 +1,12 @@
 /**
  * lib/supabaseServer.ts
- *
- * Server-side Supabase client for Server Components, Server Actions,
- * and Route Handlers. Uses @supabase/ssr to read auth cookies on the server.
- *
- * IMPORTANT: Must only be imported in Server Components or Route Handlers,
- * never in Client Components.
+ * Server-side Supabase client for Server Components and Route Handlers.
  */
 
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 export async function createServerSupabaseClient() {
-  // next/headers cookies() must be awaited in Next.js 14+
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -23,15 +17,13 @@ export async function createServerSupabaseClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)
             );
           } catch {
-            // setAll is called from a Server Component — cookies can only be
-            // set inside middleware or Route Handlers. The try/catch prevents
-            // the error from breaking server rendering.
+            // Ignore — called from Server Component where cookies are read-only
           }
         },
       },
