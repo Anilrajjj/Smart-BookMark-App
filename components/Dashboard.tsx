@@ -2,15 +2,17 @@
  * components/Dashboard.tsx
  *
  * Client component that holds shared bookmark state.
- * Passes bookmarks and the add-callback to both BookmarkForm and BookmarkList.
- * This way adding a bookmark updates the list INSTANTLY without needing Realtime.
+ * Also listens for auth state changes — if user signs out in another tab,
+ * this tab automatically redirects to the login page.
  */
 
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import BookmarkForm from "@/components/BookmarkForm";
 import BookmarkList from "@/components/BookmarkList";
+import { createClient } from "@/lib/supabaseClient";
 import type { Bookmark } from "@/lib/types";
 
 interface DashboardProps {
@@ -19,11 +21,36 @@ interface DashboardProps {
 
 export default function Dashboard({ initialBookmarks }: DashboardProps) {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(initialBookmarks);
+  const router = useRouter();
+
+  // ── Listen for auth state changes across tabs ──────────────────────────
+  useEffect(() => {
+    const supabase = createClient();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      console.log("Auth event:", event);
+
+      if (event === "SIGNED_OUT") {
+        // User signed out (in this tab or another tab) — redirect to login
+        router.push("/");
+        router.refresh();
+      }
+
+      if (event === "SIGNED_IN") {
+        // User signed in in another tab — refresh to load their data
+        router.refresh();
+      }
+    });
+
+    // Cleanup subscription on unmount
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [router]);
 
   // Called by BookmarkForm immediately after successful insert
   const handleBookmarkAdded = useCallback((newBookmark: Bookmark) => {
     setBookmarks((prev) => {
-      // Prevent duplicates
       if (prev.some((b) => b.id === newBookmark.id)) return prev;
       return [newBookmark, ...prev];
     });
