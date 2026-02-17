@@ -1,0 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #f8fafc;
+    --foreground: #0f172a;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  /* Reusable input style */
+  .input-field {
+    @apply w-full px-4 py-2.5 rounded-lg border border-slate-200 bg-white text-slate-900
+           placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500
+           focus:border-transparent transition-all duration-200 text-sm;
+  }
+
+  /* Primary button */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg
+           bg-blue-600 text-white font-medium text-sm hover:bg-blue-700
+           disabled:opacity-50 disabled:cursor-not-allowed
+           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+           transition-all duration-200 active:scale-95;
+  }
+
+  /* Danger button */
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-md
+           text-red-500 hover:bg-red-50 font-medium text-xs
+           disabled:opacity-40 disabled:cursor-not-allowed
+           focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-1
+           transition-all duration-200;
+  }
+}
