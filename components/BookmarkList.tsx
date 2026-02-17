@@ -1,8 +1,8 @@
 /**
  * components/BookmarkList.tsx
- * 
- * Fixed delete: optimistic UI removal happens instantly.
- * Realtime handles cross-tab sync when available.
+ *
+ * Displays bookmarks and handles Realtime cross-tab sync.
+ * State is lifted to Dashboard.tsx so form and list share the same data.
  */
 
 "use client";
@@ -12,11 +12,18 @@ import { createClient } from "@/lib/supabaseClient";
 import type { Bookmark } from "@/lib/types";
 
 interface BookmarkListProps {
-  initialBookmarks: Bookmark[];
+  bookmarks: Bookmark[];
+  onBookmarkDeleted: (id: string) => void;
+  onRealtimeInsert: (bookmark: Bookmark) => void;
+  onRealtimeDelete: (id: string) => void;
 }
 
-export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>(initialBookmarks);
+export default function BookmarkList({
+  bookmarks,
+  onBookmarkDeleted,
+  onRealtimeInsert,
+  onRealtimeDelete,
+}: BookmarkListProps) {
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "connected" | "error">("connecting");
@@ -26,7 +33,7 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
     setIsMounted(true);
   }, []);
 
-  // ── Realtime subscription (for cross-tab sync) ───────────────────────────
+  // ── Realtime subscription (cross-tab sync only) ──────────────────────────
   useEffect(() => {
     const supabase = createClient();
     let currentUserId: string | null = null;
@@ -36,27 +43,23 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
     });
 
     const channel = supabase
-      .channel("bookmarks_realtime_v2")
+      .channel("bookmarks_realtime_v3")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "bookmarks" },
         (payload) => {
           const newBookmark = payload.new as Bookmark;
           if (currentUserId && newBookmark.user_id !== currentUserId) return;
-          setBookmarks((prev) => {
-            if (prev.some((b) => b.id === newBookmark.id)) return prev;
-            return [newBookmark, ...prev];
-          });
+          // This handles cross-tab sync — same tab uses optimistic update
+          onRealtimeInsert(newBookmark);
         }
       )
       .on(
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "bookmarks" },
         (payload) => {
-          // Only handle DELETE from realtime for OTHER tabs.
-          // Current tab already removed it optimistically in handleDelete.
           const deletedId = payload.old.id as string;
-          setBookmarks((prev) => prev.filter((b) => b.id !== deletedId));
+          onRealtimeDelete(deletedId);
         }
       )
       .subscribe((status) => {
@@ -68,28 +71,30 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [onRealtimeInsert, onRealtimeDelete]);
 
-  // ── Delete handler — optimistic (instant UI update) ──────────────────────
+  // ── Delete — optimistic (instant) ───────────────────────────────────────
   const handleDelete = useCallback(async (id: string) => {
     setDeleteError(null);
 
-    // ✅ OPTIMISTIC: Remove from UI immediately — no waiting
-    setBookmarks((prev) => prev.filter((b) => b.id !== id));
+    // ✅ Remove from UI instantly
+    onBookmarkDeleted(id);
     setDeletingIds((prev) => new Set(prev).add(id));
 
     const supabase = createClient();
     const { error } = await supabase.from("bookmarks").delete().eq("id", id);
 
     if (error) {
-      // ❌ Failed — restore the bookmark back to the list
       setDeleteError(`Failed to delete: ${error.message}`);
-      // Re-fetch to restore correct state
+      // Re-fetch to restore correct state on error
       const { data } = await supabase
         .from("bookmarks")
         .select("*")
         .order("created_at", { ascending: false });
-      if (data) setBookmarks(data);
+      if (data) {
+        // Restore — parent will re-render with fetched data
+        data.forEach((b) => onRealtimeInsert(b as Bookmark));
+      }
     }
 
     setDeletingIds((prev) => {
@@ -97,7 +102,16 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
       next.delete(id);
       return next;
     });
-  }, []);
+  }, [onBookmarkDeleted, onRealtimeInsert]);
+
+  // ── Status colors ────────────────────────────────────────────────────────
+  const statusColor =
+    realtimeStatus === "connected" ? "#10b981" :
+    realtimeStatus === "error" ? "#ef4444" : "#f59e0b";
+
+  const statusLabel =
+    realtimeStatus === "connected" ? "Live" :
+    realtimeStatus === "error" ? "Disconnected" : "Connecting...";
 
   // ── Empty state ──────────────────────────────────────────────────────────
   if (bookmarks.length === 0) {
@@ -114,17 +128,9 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
     );
   }
 
-  const statusColor =
-    realtimeStatus === "connected" ? "#10b981" :
-    realtimeStatus === "error" ? "#ef4444" : "#f59e0b";
-
-  const statusLabel =
-    realtimeStatus === "connected" ? "Live" :
-    realtimeStatus === "error" ? "Disconnected" : "Connecting...";
-
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-3 animate-fade-in">
-      {/* List header */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">
           {bookmarks.length} bookmark{bookmarks.length !== 1 ? "s" : ""}
@@ -140,7 +146,6 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
         </span>
       </div>
 
-      {/* Delete error */}
       {deleteError && (
         <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
           <svg className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -150,7 +155,6 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
         </div>
       )}
 
-      {/* Bookmark cards */}
       <ul className="space-y-2">
         {bookmarks.map((bookmark) => (
           <li
@@ -158,7 +162,6 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
             className="group bg-white rounded-xl border border-slate-100 shadow-sm hover:border-blue-200 hover:shadow-md transition-all duration-200 animate-slide-up"
           >
             <div className="flex items-center gap-3 p-4">
-              {/* Favicon */}
               <div className="flex-shrink-0">
                 <img
                   src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(bookmark.url)}&sz=32`}
@@ -168,7 +171,6 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
                 />
               </div>
 
-              {/* Bookmark info */}
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-slate-800 truncate">{bookmark.title}</p>
                 <a
@@ -181,14 +183,12 @@ export default function BookmarkList({ initialBookmarks }: BookmarkListProps) {
                 </a>
               </div>
 
-              {/* Timestamp — client only to avoid hydration mismatch */}
               {isMounted && (
                 <span className="text-xs text-slate-300 hidden sm:block flex-shrink-0">
                   {formatDate(bookmark.created_at)}
                 </span>
               )}
 
-              {/* Delete button */}
               <button
                 onClick={() => handleDelete(bookmark.id)}
                 disabled={deletingIds.has(bookmark.id)}

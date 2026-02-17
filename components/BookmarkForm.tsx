@@ -1,26 +1,30 @@
 /**
  * components/BookmarkForm.tsx
  *
- * Client Component — form to add a new bookmark.
- * Validates input, then inserts into Supabase.
- * The realtime subscription in BookmarkList picks up the new row automatically.
+ * Add bookmark form with optimistic UI update.
+ * Bookmark appears in the list instantly after adding,
+ * without waiting for Realtime subscription.
  */
 
 "use client";
 
 import { useState, useRef } from "react";
 import { createClient } from "@/lib/supabaseClient";
+import type { Bookmark } from "@/lib/types";
 
-export default function BookmarkForm() {
+// Callback to notify BookmarkList of a new bookmark instantly
+interface BookmarkFormProps {
+  onBookmarkAdded: (bookmark: Bookmark) => void;
+}
+
+export default function BookmarkForm({ onBookmarkAdded }: BookmarkFormProps) {
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-
   const titleRef = useRef<HTMLInputElement>(null);
 
-  // Normalise URL — ensure it has a protocol
   const normaliseUrl = (raw: string): string => {
     const trimmed = raw.trim();
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
@@ -53,11 +57,7 @@ export default function BookmarkForm() {
     setIsSubmitting(true);
 
     const supabase = createClient();
-
-    // Get the current user's ID
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
       setError("You must be logged in to add bookmarks.");
@@ -65,11 +65,17 @@ export default function BookmarkForm() {
       return;
     }
 
-    const { error: insertError } = await supabase.from("bookmarks").insert({
-      title: title.trim(),
-      url: normaliseUrl(url),
-      user_id: user.id,
-    });
+    const normalizedUrl = normaliseUrl(url);
+
+    const { data, error: insertError } = await supabase
+      .from("bookmarks")
+      .insert({
+        title: title.trim(),
+        url: normalizedUrl,
+        user_id: user.id,
+      })
+      .select()
+      .single();
 
     setIsSubmitting(false);
 
@@ -78,42 +84,31 @@ export default function BookmarkForm() {
       return;
     }
 
-    // Clear form on success
+    // ✅ Instantly notify parent to add to list — no Realtime needed
+    if (data) {
+      onBookmarkAdded(data as Bookmark);
+    }
+
+    // Clear form
     setTitle("");
     setUrl("");
     setSuccess(true);
     titleRef.current?.focus();
-
-    // Hide success message after 2 seconds
     setTimeout(() => setSuccess(false), 2000);
   };
 
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 animate-fade-in">
       <h3 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-2">
-        <svg
-          className="w-4 h-4 text-blue-500"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2.5}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M12 4v16m8-8H4"
-          />
+        <svg className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
         </svg>
         Add New Bookmark
       </h3>
 
       <form onSubmit={handleSubmit} className="space-y-3" noValidate>
-        {/* Title input */}
         <div>
-          <label
-            htmlFor="bookmark-title"
-            className="block text-xs font-medium text-slate-600 mb-1"
-          >
+          <label htmlFor="bookmark-title" className="block text-xs font-medium text-slate-600 mb-1">
             Title
           </label>
           <input
@@ -130,12 +125,8 @@ export default function BookmarkForm() {
           />
         </div>
 
-        {/* URL input */}
         <div>
-          <label
-            htmlFor="bookmark-url"
-            className="block text-xs font-medium text-slate-600 mb-1"
-          >
+          <label htmlFor="bookmark-url" className="block text-xs font-medium text-slate-600 mb-1">
             URL
           </label>
           <input
@@ -151,83 +142,37 @@ export default function BookmarkForm() {
           />
         </div>
 
-        {/* Error message */}
         {error && (
           <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-            <svg
-              className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path
-                fillRule="evenodd"
-                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                clipRule="evenodd"
-              />
+            <svg className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
             </svg>
             <p className="text-xs text-red-600">{error}</p>
           </div>
         )}
 
-        {/* Success message */}
         {success && (
           <div className="flex items-center gap-2 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
-            <svg
-              className="w-4 h-4 text-green-500 flex-shrink-0"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path
-                fillRule="evenodd"
-                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                clipRule="evenodd"
-              />
+            <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
             </svg>
-            <p className="text-xs text-green-600 font-medium">
-              Bookmark added!
-            </p>
+            <p className="text-xs text-green-600 font-medium">Bookmark added!</p>
           </div>
         )}
 
-        {/* Submit button */}
         <button type="submit" disabled={isSubmitting} className="btn-primary">
           {isSubmitting ? (
             <>
-              <svg
-                className="w-4 h-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
               Adding…
             </>
           ) : (
             <>
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 4v16m8-8H4"
-                />
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
               Add Bookmark
             </>
