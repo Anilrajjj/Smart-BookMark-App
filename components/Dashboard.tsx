@@ -37,7 +37,8 @@ export default function Dashboard({ initialBookmarks }: DashboardProps) {
       }
 
       if (event === "SIGNED_IN") {
-        // User signed in in another tab — refresh to load their data
+        // User signed in in another tab — redirect to dashboard and reload data
+        router.push("/dashboard");
         router.refresh();
       }
     });
