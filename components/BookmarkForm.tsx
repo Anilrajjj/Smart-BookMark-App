@@ -1,9 +1,6 @@
 /**
  * components/BookmarkForm.tsx
- *
- * Add bookmark form with optimistic UI update.
- * Bookmark appears in the list instantly after adding,
- * without waiting for Realtime subscription.
+ * Add bookmark form with strict URL validation.
  */
 
 "use client";
@@ -12,7 +9,6 @@ import { useState, useRef } from "react";
 import { createClient } from "@/lib/supabaseClient";
 import type { Bookmark } from "@/lib/types";
 
-// Callback to notify BookmarkList of a new bookmark instantly
 interface BookmarkFormProps {
   onBookmarkAdded: (bookmark: Bookmark) => void;
 }
@@ -25,6 +21,7 @@ export default function BookmarkForm({ onBookmarkAdded }: BookmarkFormProps) {
   const [success, setSuccess] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
 
+  // Adds https:// if protocol is missing
   const normaliseUrl = (raw: string): string => {
     const trimmed = raw.trim();
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
@@ -36,12 +33,52 @@ export default function BookmarkForm({ onBookmarkAdded }: BookmarkFormProps) {
   const validate = (): string | null => {
     if (!title.trim()) return "Title is required.";
     if (!url.trim()) return "URL is required.";
+
     try {
-      new URL(normaliseUrl(url));
+      const parsed = new URL(normaliseUrl(url));
+
+      // Only allow http and https protocols
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        return "URL must use http:// or https://.";
+      }
+
+      const hostname = parsed.hostname;
+
+      // Must have a dot — rejects plain words like 'hello', 'test', 'random'
+      if (!hostname.includes(".")) {
+        return "Please enter a real URL with a domain (e.g. https://example.com).";
+      }
+
+      // Split into parts: ['google', 'com'] or ['sub', 'google', 'com']
+      const parts = hostname.split(".");
+
+      // Each part must be non-empty
+      if (parts.some((p) => p.length === 0)) {
+        return "Please enter a valid URL (e.g. https://example.com).";
+      }
+
+      // TLD (last part like .com .io .in) must be 2-6 letters only
+      const tld = parts[parts.length - 1];
+      if (!/^[a-zA-Z]{2,6}$/.test(tld)) {
+        return "Please enter a valid URL (e.g. https://example.com).";
+      }
+
+      // Domain name (second to last part) must be at least 1 char
+      const domain = parts[parts.length - 2];
+      if (!domain || domain.length < 1) {
+        return "Please enter a valid URL (e.g. https://example.com).";
+      }
+
+      // Only allow valid hostname characters
+      if (!/^[a-zA-Z0-9.-]+$/.test(hostname)) {
+        return "URL contains invalid characters.";
+      }
+
     } catch {
       return "Please enter a valid URL (e.g. https://example.com).";
     }
-    return null;
+
+    return null; // all good
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -69,11 +106,7 @@ export default function BookmarkForm({ onBookmarkAdded }: BookmarkFormProps) {
 
     const { data, error: insertError } = await supabase
       .from("bookmarks")
-      .insert({
-        title: title.trim(),
-        url: normalizedUrl,
-        user_id: user.id,
-      })
+      .insert({ title: title.trim(), url: normalizedUrl, user_id: user.id })
       .select()
       .single();
 
@@ -84,12 +117,8 @@ export default function BookmarkForm({ onBookmarkAdded }: BookmarkFormProps) {
       return;
     }
 
-    // ✅ Instantly notify parent to add to list — no Realtime needed
-    if (data) {
-      onBookmarkAdded(data as Bookmark);
-    }
+    if (data) onBookmarkAdded(data as Bookmark);
 
-    // Clear form
     setTitle("");
     setUrl("");
     setSuccess(true);
@@ -140,6 +169,9 @@ export default function BookmarkForm({ onBookmarkAdded }: BookmarkFormProps) {
             maxLength={2000}
             autoComplete="off"
           />
+          <p className="text-xs text-slate-400 mt-1">
+            Must be a real website URL (e.g. https://google.com)
+          </p>
         </div>
 
         {error && (
