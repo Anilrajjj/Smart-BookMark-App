@@ -1,6 +1,8 @@
 /**
  * components/BookmarkList.tsx
- * Fixed cross-tab realtime sync - waits for user ID before subscribing.
+ *
+ * Fixed: Waits for SIGNED_IN auth event before starting Realtime subscription.
+ * This ensures Tab 2 connects properly when navigated to dashboard via auth sync.
  */
 
 "use client";
@@ -34,35 +36,28 @@ export default function BookmarkList({
   // ── Realtime subscription ────────────────────────────────────────────────
   useEffect(() => {
     const supabase = createClient();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let isSubscribed = false;
 
-    // ✅ Get user ID FIRST, then subscribe — ensures filter works correctly
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
+    const startRealtime = (userId: string) => {
+      // Prevent duplicate subscriptions
+      if (isSubscribed) return;
+      isSubscribed = true;
 
-      const channel = supabase
-        .channel(`bookmarks_user_${user.id}_v4`)
+      channel = supabase
+        .channel(`bookmarks_user_${userId}_v5`)
         .on(
           "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "bookmarks",
-          },
+          { event: "INSERT", schema: "public", table: "bookmarks" },
           (payload) => {
             const newBookmark = payload.new as Bookmark;
-            // Only process this user's bookmarks
-            if (newBookmark.user_id !== user.id) return;
-            // onRealtimeInsert handles deduplication in Dashboard.tsx
+            if (newBookmark.user_id !== userId) return;
             onRealtimeInsert(newBookmark);
           }
         )
         .on(
           "postgres_changes",
-          {
-            event: "DELETE",
-            schema: "public",
-            table: "bookmarks",
-          },
+          { event: "DELETE", schema: "public", table: "bookmarks" },
           (payload) => {
             const deletedId = payload.old.id as string;
             onRealtimeDelete(deletedId);
@@ -71,20 +66,39 @@ export default function BookmarkList({
         .subscribe((status) => {
           console.log("Realtime status:", status);
           if (status === "SUBSCRIBED") setRealtimeStatus("connected");
-          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setRealtimeStatus("error");
+          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            setRealtimeStatus("error");
+          }
         });
+    };
 
-      // Cleanup inside the async callback
-      return () => {
-        supabase.removeChannel(channel);
-      };
+    // ✅ Step 1: Try to get existing session immediately
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        // Session already available (e.g. Tab 1 or page refresh)
+        startRealtime(user.id);
+      }
+      // If no user yet, Step 2 below will catch it
     });
+
+    // ✅ Step 2: Also listen for SIGNED_IN in case session arrives slightly late
+    // This handles Tab 2 which gets redirected via onAuthStateChange
+    const { data: { subscription: authSubscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        startRealtime(session.user.id);
+      }
+    });
+
+    return () => {
+      isSubscribed = false;
+      authSubscription.unsubscribe();
+      if (channel) supabase.removeChannel(channel);
+    };
   }, [onRealtimeInsert, onRealtimeDelete]);
 
   // ── Delete — optimistic (instant) ───────────────────────────────────────
   const handleDelete = useCallback(async (id: string) => {
     setDeleteError(null);
-    // Remove from UI instantly
     onBookmarkDeleted(id);
     setDeletingIds((prev) => new Set(prev).add(id));
 
@@ -93,7 +107,6 @@ export default function BookmarkList({
 
     if (error) {
       setDeleteError(`Failed to delete: ${error.message}`);
-      // Re-fetch to restore correct state
       const { data } = await supabase
         .from("bookmarks")
         .select("*")
@@ -108,7 +121,7 @@ export default function BookmarkList({
     });
   }, [onBookmarkDeleted, onRealtimeInsert]);
 
-  // ── Status indicator ─────────────────────────────────────────────────────
+  // ── Status colors ────────────────────────────────────────────────────────
   const statusColor =
     realtimeStatus === "connected" ? "#10b981" :
     realtimeStatus === "error" ? "#ef4444" : "#f59e0b";
